@@ -4,11 +4,17 @@
 # A Neon Arcade Shooter
 
 from pygame import *
+import asyncio
 import sys
-from os.path import abspath, dirname
+import sys
+import os
+import json
 from random import choice
 
-BASE_PATH = abspath(dirname(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_PATH = sys._MEIPASS
+else:
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = BASE_PATH + '/fonts/'
 IMAGE_PATH = BASE_PATH + '/images/'
 SOUND_PATH = BASE_PATH + '/sounds/'
@@ -41,6 +47,51 @@ BLOCKERS_POSITION = 450
 ENEMY_DEFAULT_POSITION = 65  # Initial value for a new game
 ENEMY_MOVE_DOWN = 35
 
+LEADERBOARD_FILE = 'scores.txt'
+
+def load_scores():
+    if not os.path.exists(LEADERBOARD_FILE):
+        return []
+    try:
+        with open(LEADERBOARD_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_score(name, score):
+    scores = load_scores()
+    scores.append({'name': name, 'score': score})
+    # Sort by score desc, keep top 5
+    scores.sort(key=lambda x: x['score'], reverse=True)
+    scores = scores[:5]
+    with open(LEADERBOARD_FILE, 'w') as f:
+        json.dump(scores, f)
+
+class InputBox:
+    def __init__(self, x, y, w, h, text=''):
+        self.rect = Rect(x, y, w, h)
+        self.color = WHITE
+        self.text = text
+        self.font = font.Font(FONT, 20)  # Load font from path
+        self.txt_surface = self.font.render(text, True, self.color)
+        self.active = True
+
+    def handle_event(self, event):
+        if event.type == KEYDOWN:
+            if event.key == K_RETURN or event.key == 13 or event.key == 1073741912: # K_RETURN or K_KP_ENTER
+                return self.text
+            elif event.key == K_BACKSPACE:
+                self.text = self.text[:-1]
+            else:
+                # Limit length
+                if len(self.text) < 10:
+                    self.text += event.unicode
+            self.txt_surface = self.font.render(self.text, True, self.color)
+        return None
+
+    def draw(self, screen):
+        screen.blit(self.txt_surface, (self.rect.x+5, self.rect.y+5))
+        draw.rect(screen, self.color, self.rect, 2)
 
 class Ship(sprite.Sprite):
     def __init__(self):
@@ -409,27 +460,58 @@ class GalaxyRaiders(object):
     def __init__(self):
         # It seems, in Linux buffersize=512 is not enough, use 4096 to prevent:
         #   ALSA lib pcm.c:7963:(snd_pcm_recover) underrun occurred
-        mixer.pre_init(44100, -16, 1, 4096)
+        # mixer.pre_init(44100, -16, 1, 4096)
         init()
         self.clock = time.Clock()
         self.caption = display.set_caption('Galaxy Raiders')
         self.screen = SCREEN
         self.background = image.load(IMAGE_PATH + 'background.jpg').convert()
         self.startGame = False
-        self.mainScreen = True
+        self.nextLevelSound = mixer.Sound(SOUND_PATH + 'mysterykilled.wav')
+        self.nextLevelSound.set_volume(0.3)
+
+        self.loginScreen = True
+        self.mainScreen = False
+        self.leaderboardScreen = False
         self.gameOver = False
-        # Counter for enemy starting position (increased each new round)
+        self.startGame = False
+        
         self.enemyPosition = ENEMY_DEFAULT_POSITION
-        self.titleText = Text(FONT, 50, 'Galaxy Raiders', WHITE, 164, 155)
-        self.titleText2 = Text(FONT, 25, 'Press any key to continue', WHITE,
-                               201, 225)
+        self.playerName = "Player"
+        self.inputBox = InputBox(330, 300, 140, 32)
+        
+        self.devText = Text(FONT, 15, 'Developer: Manish Ram', GREEN, 320, 570)
+        self.scores = []
+
+        # Initial Screen Objects (Login)
+        self.titleText = Text(FONT, 50, 'Galaxy Raiders', WHITE, 164, 60)
+        self.titleText2 = Text(FONT, 25, 'Enter Pilot Name:', WHITE, 255, 225)
+        self.startText = Text(FONT, 25, 'Press ENTER to Start', WHITE, 235, 360)
         self.gameOverText = Text(FONT, 50, 'Game Over', WHITE, 250, 270)
         self.nextRoundText = Text(FONT, 50, 'Next Round', WHITE, 240, 270)
-        self.enemy1Text = Text(FONT, 25, '   =   10 pts', GREEN, 368, 270)
-        self.enemy2Text = Text(FONT, 25, '   =  20 pts', BLUE, 368, 320)
-        self.enemy3Text = Text(FONT, 25, '   =  30 pts', PURPLE, 368, 370)
-        self.enemy4Text = Text(FONT, 25, '   =  300 pts', RED, 368, 420)
+        self.enemy1Text = Text(FONT, 25, '   =   10 pts', GREEN, 360, 220)
+        self.enemy2Text = Text(FONT, 25, '   =  20 pts', BLUE, 360, 270)
+        self.enemy3Text = Text(FONT, 25, '   =  30 pts', PURPLE, 360, 320)
+        self.enemy4Text = Text(FONT, 25, '   =  300 pts', RED, 360, 370)
         self.scoreText = Text(FONT, 20, 'Score', WHITE, 5, 5)
+
+    def reset(self, score, level=1):
+        self.player = Ship()
+        self.level = level  # Update current level
+        
+    def create_main_menu(self):
+        self.enemy1 = IMAGES['enemy3_1']
+        self.enemy1 = transform.scale(self.enemy1, (40, 40))
+        self.enemy2 = IMAGES['enemy2_2']
+        self.enemy2 = transform.scale(self.enemy2, (40, 40))
+        self.enemy3 = IMAGES['enemy1_2']
+        self.enemy3 = transform.scale(self.enemy3, (40, 40))
+        self.enemy4 = IMAGES['mystery']
+        self.enemy4 = transform.scale(self.enemy4, (80, 40))
+        self.screen.blit(self.enemy1, (310, 220))
+        self.screen.blit(self.enemy2, (310, 270))
+        self.screen.blit(self.enemy3, (310, 320))
+        self.screen.blit(self.enemy4, (291, 370))
         self.livesText = Text(FONT, 20, 'Lives ', WHITE, 640, 5)
         
         # Level 2: Flux Meter UI
@@ -648,19 +730,7 @@ class GalaxyRaiders(object):
         self.score += score
         return score
 
-    def create_main_menu(self):
-        self.enemy1 = IMAGES['enemy3_1']
-        self.enemy1 = transform.scale(self.enemy1, (40, 40))
-        self.enemy2 = IMAGES['enemy2_2']
-        self.enemy2 = transform.scale(self.enemy2, (40, 40))
-        self.enemy3 = IMAGES['enemy1_2']
-        self.enemy3 = transform.scale(self.enemy3, (40, 40))
-        self.enemy4 = IMAGES['mystery']
-        self.enemy4 = transform.scale(self.enemy4, (80, 40))
-        self.screen.blit(self.enemy1, (318, 270))
-        self.screen.blit(self.enemy2, (318, 320))
-        self.screen.blit(self.enemy3, (318, 370))
-        self.screen.blit(self.enemy4, (299, 420))
+
 
     def check_collisions(self):
         sprite.groupcollide(self.bullets, self.enemyBullets, True, True)
@@ -768,32 +838,92 @@ class GalaxyRaiders(object):
             if self.should_exit(e):
                 sys.exit()
 
-    def main(self):
+    async def main(self):
         while True:
-            if self.mainScreen:
+            # --- LOGIN SCREEN ---
+            if self.loginScreen:
                 self.screen.blit(self.background, (0, 0))
                 self.titleText.draw(self.screen)
                 self.titleText2.draw(self.screen)
+                self.startText.draw(self.screen)
+                self.inputBox.draw(self.screen)
+                self.devText.draw(self.screen)
+                
+                for e in event.get():
+                    if self.should_exit(e):
+                        sys.exit()
+                    name = self.inputBox.handle_event(e)
+                    if name is not None: # Enter pressed
+                        self.playerName = self.inputBox.text if self.inputBox.text else "Pilot"
+                        self.loginScreen = False
+                        self.mainScreen = True
+                        self.scores = load_scores() # Load for menu
+
+                display.update()
+                self.clock.tick(60)
+                await asyncio.sleep(0)
+                continue
+
+            # --- MAIN MENU ---
+            elif self.mainScreen:
+                self.screen.blit(self.background, (0, 0))
+                self.titleText.draw(self.screen)
+                # Removed titleText2 ("Enter Pilot Name") from Main Menu
+                
+                Text(FONT, 20, f"Pilot: {self.playerName}", CYAN, 350, 140).draw(self.screen)
+                
                 self.enemy1Text.draw(self.screen)
                 self.enemy2Text.draw(self.screen)
                 self.enemy3Text.draw(self.screen)
                 self.enemy4Text.draw(self.screen)
+                
+                Text(FONT, 25, "Press SPACE to Launch", WHITE, 220, 440).draw(self.screen)
+                Text(FONT, 20, "Press L for Leaderboard", YELLOW, 250, 480).draw(self.screen)
+                
+                self.devText.draw(self.screen)
+                
                 self.create_main_menu()
                 for e in event.get():
                     if self.should_exit(e):
                         sys.exit()
                     if e.type == KEYUP:
-                        # Only create blockers on a new game, not a new round
-                        self.allBlockers = sprite.Group(self.make_blockers(0),
-                                                        self.make_blockers(1),
-                                                        self.make_blockers(2),
-                                                        self.make_blockers(3))
-                        self.livesGroup.add(self.life1, self.life2, self.life3)
-                        self.livesGroup.add(self.life1, self.life2, self.life3)
-                        self.level = 1
-                        self.reset(0, self.level)
-                        self.startGame = True
-                        self.mainScreen = False
+                        if e.key == K_SPACE:
+                            self.allBlockers = sprite.Group(self.make_blockers(0),
+                                                            self.make_blockers(1),
+                                                            self.make_blockers(2),
+                                                            self.make_blockers(3))
+                            self.livesGroup.add(self.life1, self.life2, self.life3)
+                            self.level = 1
+                            self.reset(0, self.level)
+                            self.startGame = True
+                            self.mainScreen = False
+                        elif e.key == K_l:
+                            self.scores = load_scores() # Refresh scores before showing
+                            self.leaderboardScreen = True
+                            self.mainScreen = False
+
+            # --- LEADERBOARD SCREEN ---
+            elif self.leaderboardScreen:
+                self.screen.blit(self.background, (0, 0))
+                Text(FONT, 50, "HALL OF FAME", YELLOW, 210, 50).draw(self.screen)
+                Text(FONT, 20, "TOP PILOTS:", CYAN, 340, 130).draw(self.screen)
+                
+                y_pos = 180
+                for idx, sc in enumerate(self.scores):
+                    entry = f"{idx+1}. {sc['name']}   -   {sc['score']}"
+                    Text(FONT, 25, entry, WHITE, 300, y_pos).draw(self.screen)
+                    y_pos += 40
+                
+                Text(FONT, 25, "Press ESC to Return", GREEN, 280, 500).draw(self.screen)
+                self.devText.draw(self.screen)
+                
+                for e in event.get():
+                    if e.type == QUIT:
+                        sys.exit()
+                    if e.type == KEYUP:
+                        if e.key == K_ESCAPE:
+                            self.leaderboardScreen = False
+                            self.mainScreen = True
 
             elif self.startGame:
                 # Level Transition Logic
@@ -863,11 +993,24 @@ class GalaxyRaiders(object):
                 # Reset enemy starting position
                 self.enemyPosition = ENEMY_DEFAULT_POSITION
                 self.create_game_over(currentTime)
+                # Save Score once (Logic check loop precaution)
+                if hasattr(self, 'score') and self.score > 0:
+                     # Check if score already saved this session? 
+                     # For simplicity, we save every game over. Duplicates possible but okay for local.
+                     # Better: add flag self.scoreSaved
+                     if not getattr(self, 'scoreSaved', False):
+                         save_score(self.playerName, self.score)
+                         self.scoreSaved = True
+            
+            # Reset scoreSaved on new game start
+            if self.startGame and not self.gameOver:
+                 self.scoreSaved = False
 
             display.update()
             self.clock.tick(60)
+            await asyncio.sleep(0)
 
 
 if __name__ == '__main__':
     game = GalaxyRaiders()
-    game.main()
+    asyncio.run(game.main())
